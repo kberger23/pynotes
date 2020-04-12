@@ -1,10 +1,151 @@
 from kivy.app import App
 from kivy.uix.button import Button
 
+import json
+from os.path import join, exists
+from kivy.app import App
+from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
+from kivy.properties import ListProperty, StringProperty, \
+    NumericProperty, BooleanProperty, AliasProperty
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
+from kivy.clock import Clock
 
-class TestApp(App):
+
+class MutableTextInput(FloatLayout):
+    text = StringProperty()
+    multiline = BooleanProperty(True)
+
+    def __init__(self, **kwargs):
+        super(MutableTextInput, self).__init__(**kwargs)
+        Clock.schedule_once(self.prepare, 0)
+
+    def prepare(self, *args):
+        self.w_textinput = self.ids.w_textinput.__self__
+        self.w_label = self.ids.w_label.__self__
+        self.view()
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self.edit()
+        return super(MutableTextInput, self).on_touch_down(touch)
+
+    def edit(self):
+        self.clear_widgets()
+        self.add_widget(self.w_textinput)
+        self.w_textinput.focus = True
+
+    def view(self):
+        self.clear_widgets()
+        self.add_widget(self.w_label)
+
+    def check_focus_and_view(self, textinput):
+        if not textinput.focus:
+            self.text = textinput.text
+            self.view()
+
+
+class NoteView(Screen):
+    note_index = NumericProperty()
+    note_title = StringProperty()
+    note_content = StringProperty()
+
+
+class NoteListItem(BoxLayout):
+    note_content = StringProperty()
+    note_title = StringProperty()
+    note_index = NumericProperty()
+
+
+class Notes(Screen):
+    data = ListProperty()
+
+    def _get_data_for_widgets(self):
+        return [{
+            'note_index': index,
+            'note_content': item['content'],
+            'note_title': item['title']}
+            for index, item in enumerate(self.data)]
+
+    data_for_widgets = AliasProperty(_get_data_for_widgets, bind=['data'])
+
+
+class PyNotes(App):
+
     def build(self):
-        return Button(text='Sara ist nicht begeistert. Toll.')
+        self.item = Notes(name='notes')
+        self.load_notes()
+
+        self.transition = SlideTransition(duration=.1)
+        root = ScreenManager(transition=self.transition)
+        root.add_widget(self.item)
+        return root
+
+    def load_notes(self):
+        if not exists(self.notes_fn):
+            return
+        with open(self.notes_fn) as fd:
+            data = json.load(fd)
+        self.item.data = data
+
+    def save_notes(self):
+        with open(self.notes_fn, 'w') as fd:
+            json.dump(self.item.data, fd)
+
+    def del_note(self, note_index):
+        del self.item.data[note_index]
+        self.save_notes()
+        self.refresh_notes()
+        self.go_notes()
+
+    def edit_note(self, note_index):
+        note = self.item.data[note_index]
+        name = 'note{}'.format(note_index)
+
+        if self.root.has_screen(name):
+            self.root.remove_widget(self.root.get_screen(name))
+
+        view = NoteView(
+            name=name,
+            note_index=note_index,
+            note_title=note.get('title'),
+            note_content=note.get('content'))
+
+        self.root.add_widget(view)
+        self.transition.direction = 'left'
+        self.root.current = view.name
+
+    def add_item(self):
+        self.item.data.append({'title': 'New', 'content': ''})
+        note_index = len(self.item.data) - 1
+        self.edit_note(note_index)
+
+    def set_note_content(self, note_index, note_content):
+        self.item.data[note_index]['content'] = note_content
+        data = self.item.data
+        self.item.data = []
+        self.item.data = data
+        self.save_notes()
+        self.refresh_notes()
+
+    def set_note_title(self, note_index, note_title):
+        self.item.data[note_index]['title'] = note_title
+        self.save_notes()
+        self.refresh_notes()
+
+    def refresh_notes(self):
+        data = self.item.data
+        self.item.data = []
+        self.item.data = data
+
+    def go_notes(self):
+        self.transition.direction = 'right'
+        self.root.current = 'notes'
+
+    @property
+    def notes_fn(self):
+        return join(self.user_data_dir, 'notes.json')
 
 
-TestApp().run()
+if __name__ == '__main__':
+    PyNotes().run()
